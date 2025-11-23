@@ -684,36 +684,54 @@
           return 'NORMAL';
         };
 
-        // -- Load Data (Effect) --
-        useEffect(() => {
-          // 1. Load Stocks
-          const savedStocks = StorageService.load(KEYS.STOCKS);
-          if (savedStocks) {
-            // Data Migration Logic (ensure new fields exist)
-            const migratedStocks = savedStocks.map(s => {
-                const targetDefault = DEFAULT_ORDER_QUANTITIES[s.name] || 5;
-                const currentOrderQty = s.orderQuantity !== undefined ? s.orderQuantity : 5;
-                return {
-                  ...s,
-                  orderQuantity: currentOrderQty === 5 ? targetDefault : currentOrderQty,
-                  orderCost: s.orderCost ?? 0
-                };
-            });
-            setStocks(migratedStocks);
-          } else {
-            setStocks(generateInitialStocks());
-          }
+        // -- Reusable Load Data Logic --
+        const refreshData = useCallback(() => {
+            try {
+                // 1. Load Stocks
+                const savedStocks = StorageService.load(KEYS.STOCKS);
+                if (savedStocks) {
+                    const migratedStocks = savedStocks.map(s => {
+                        const targetDefault = DEFAULT_ORDER_QUANTITIES[s.name] || 5;
+                        const currentOrderQty = s.orderQuantity !== undefined ? s.orderQuantity : 5;
+                        return {
+                        ...s,
+                        orderQuantity: currentOrderQty === 5 ? targetDefault : currentOrderQty,
+                        orderCost: s.orderCost ?? 0
+                        };
+                    });
+                    setStocks(migratedStocks);
+                } else {
+                    // Only set initial if first run (LS is empty)
+                    // If we are just refreshing, we respect LS, but if LS is null (rare), reset.
+                    setStocks(generateInitialStocks());
+                }
 
-          // 2. Load Transactions
-          const savedTransactions = StorageService.load(KEYS.TRANSACTIONS, []);
-          setTransactions(savedTransactions);
+                // 2. Load Transactions
+                const savedTransactions = StorageService.load(KEYS.TRANSACTIONS, []);
+                setTransactions(savedTransactions);
 
-          // 3. Load Preferences
-          const savedPrefs = StorageService.load(KEYS.PREFERENCES, { sortDesc: true, filterType: 'ALL' });
-          setPrefs(savedPrefs);
-
-          setIsLoaded(true);
+                // 3. Load Preferences
+                const savedPrefs = StorageService.load(KEYS.PREFERENCES, { sortDesc: true, filterType: 'ALL' });
+                setPrefs(savedPrefs);
+            } catch (e) {
+                console.error("Error refreshing data:", e);
+            }
         }, []);
+
+        // -- Load Data (Effects) --
+        
+        // 1. Initial Load
+        useEffect(() => {
+          refreshData();
+          setIsLoaded(true);
+        }, [refreshData]);
+
+        // 2. Refresh on Page Turn (View Change)
+        useEffect(() => {
+            if (isLoaded) {
+                refreshData();
+            }
+        }, [currentView, isLoaded, refreshData]);
 
         // -- Save Data (Effects) --
         
@@ -917,7 +935,8 @@
               </header>
 
               {/* Main Content Area */}
-              <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-4 bg-gray-50 relative">
+              {/* Added 'overscroll-none' to prevent pull-to-refresh on mobile */}
+              <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-4 bg-gray-50 relative overscroll-none">
                  {currentView === 'INVENTORY' && <InventoryView />}
                  {currentView === 'EDIT' && <EditStockView />}
                  {currentView === 'ALERTS' && <AlertsView />}
@@ -952,7 +971,7 @@
                             <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".json" className="hidden" />
                             <button onClick={handleImportClick} className="w-full flex items-center justify-center gap-2 p-3 bg-white text-orange-600 rounded-lg border border-orange-200 font-bold shadow-sm"><Upload size={18}/> 匯入備份</button>
                          </div>
-                         <div className="text-center"><p className="text-xs text-gray-400">StoreKeeper v1.2.0</p></div>
+                         <div className="text-center"><p className="text-xs text-gray-400">StoreKeeper v1.2.1</p></div>
                       </div>
                    </div>
                 </div>
