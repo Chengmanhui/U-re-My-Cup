@@ -128,9 +128,13 @@
         BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
       } from 'recharts';
 
-      // --- 1. Global Constants ---
-      const STOCKS_KEY = 'storekeeper_stocks_v1';
-      const TRANSACTIONS_KEY = 'storekeeper_transactions_v1';
+      // --- 1. Storage Logic & Constants ---
+      
+      const KEYS = {
+        STOCKS: 'storekeeper_stocks_v1',
+        TRANSACTIONS: 'storekeeper_transactions_v1',
+        PREFERENCES: 'storekeeper_prefs_v1' // [New] Save view filters
+      };
 
       const INITIAL_STOCK_NAMES = [
         "仙草", "機糖", "椰漿", "鮮奶", "乳酪", "紅茶", "鴨屎", "茉莉", "椰粉", 
@@ -141,6 +145,34 @@
         "仙草": 4, "機糖": 8, "椰漿": 4, "鮮奶": 2, "乳酪": 2, "紅茶": 3, 
         "鴨屎": 3, "茉莉": 6, "椰粉": 3, "黑糖": 3, "珍珠": 6, "冬瓜漿": 2, 
         "百香果醬": 2, "葡萄醬": 2, "芒果醬": 2, "草莓醬": 2, "芭樂醬": 2, "青提醬": 2
+      };
+
+      /**
+       * Robust Storage Service to handle LocalStorage operations
+       * Includes error handling for quota limits and JSON parsing
+       */
+      const StorageService = {
+        save: (key, data) => {
+          try {
+            const stringified = JSON.stringify(data);
+            localStorage.setItem(key, stringified);
+          } catch (e) {
+            console.error(`Failed to save to ${key}:`, e);
+            if (e.name === 'QuotaExceededError' || e.code === 22) {
+              alert("儲存空間已滿 (Storage Full)。請清除舊記錄或匯出備份。");
+            }
+          }
+        },
+
+        load: (key, fallbackValue = null) => {
+          try {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : fallbackValue;
+          } catch (e) {
+            console.error(`Failed to load from ${key}:`, e);
+            return fallbackValue;
+          }
+        }
       };
 
       // --- 2. Context ---
@@ -505,12 +537,20 @@
       };
 
       const HistoryView = () => {
-        const { transactions, stocks, updateTransactionNotes } = useStock();
-        const [sortDesc, setSortDesc] = useState(true);
-        const [filterStockIds, setFilterStockIds] = useState([]);
-        const [filterType, setFilterType] = useState('ALL');
+        const { transactions, stocks, updateTransactionNotes, prefs, updatePrefs } = useStock();
+        
+        // Initialize state from prefs or defaults
+        const [sortDesc, setSortDesc] = useState(prefs?.sortDesc ?? true);
+        const [filterType, setFilterType] = useState(prefs?.filterType ?? 'ALL');
+        const [filterStockIds, setFilterStockIds] = useState([]); // Don't persist detailed filters for now, just main view prefs
+        
         const [showFilters, setShowFilters] = useState(false);
         const [editingNote, setEditingNote] = useState(null);
+
+        // Update prefs when local state changes
+        useEffect(() => {
+          updatePrefs({ sortDesc, filterType });
+        }, [sortDesc, filterType, updatePrefs]);
 
         const filtered = useMemo(() => transactions.filter(tx => {
           if (filterStockIds.length > 0 && !filterStockIds.includes(tx.stockId)) return false;
@@ -616,6 +656,8 @@
         // -- Global State Variables --
         const [stocks, setStocks] = useState([]);
         const [transactions, setTransactions] = useState([]);
+        const [prefs, setPrefs] = useState({ sortDesc: true, filterType: 'ALL' });
+        
         const [currentView, setCurrentView] = useState('INVENTORY');
         const [isLoaded, setIsLoaded] = useState(false);
         const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -642,51 +684,62 @@
           return 'NORMAL';
         };
 
-        // -- Window.onload / Setup (Effect) --
+        // -- Load Data (Effect) --
         useEffect(() => {
-          const loadData = () => {
-            try {
-              const savedStocks = localStorage.getItem(STOCKS_KEY);
-              const savedTransactions = localStorage.getItem(TRANSACTIONS_KEY);
+          // 1. Load Stocks
+          const savedStocks = StorageService.load(KEYS.STOCKS);
+          if (savedStocks) {
+            // Data Migration Logic (ensure new fields exist)
+            const migratedStocks = savedStocks.map(s => {
+                const targetDefault = DEFAULT_ORDER_QUANTITIES[s.name] || 5;
+                const currentOrderQty = s.orderQuantity !== undefined ? s.orderQuantity : 5;
+                return {
+                  ...s,
+                  orderQuantity: currentOrderQty === 5 ? targetDefault : currentOrderQty,
+                  orderCost: s.orderCost ?? 0
+                };
+            });
+            setStocks(migratedStocks);
+          } else {
+            setStocks(generateInitialStocks());
+          }
 
-              if (savedStocks) {
-                const parsedStocks = JSON.parse(savedStocks);
-                const migratedStocks = parsedStocks.map(s => {
-                   const targetDefault = DEFAULT_ORDER_QUANTITIES[s.name] || 5;
-                   const currentOrderQty = s.orderQuantity !== undefined ? s.orderQuantity : 5;
-                   return {
-                     ...s,
-                     orderQuantity: currentOrderQty === 5 ? targetDefault : currentOrderQty,
-                     orderCost: s.orderCost ?? 0
-                   };
-                });
-                setStocks(migratedStocks);
-              } else {
-                setStocks(generateInitialStocks());
-              }
+          // 2. Load Transactions
+          const savedTransactions = StorageService.load(KEYS.TRANSACTIONS, []);
+          setTransactions(savedTransactions);
 
-              if (savedTransactions) {
-                setTransactions(JSON.parse(savedTransactions));
-              }
-            } catch (e) {
-              console.error("Failed to load data", e);
-              setStocks(generateInitialStocks());
-            } finally {
-              setIsLoaded(true);
-            }
-          };
+          // 3. Load Preferences
+          const savedPrefs = StorageService.load(KEYS.PREFERENCES, { sortDesc: true, filterType: 'ALL' });
+          setPrefs(savedPrefs);
 
-          loadData();
+          setIsLoaded(true);
         }, []);
 
-        // -- Persistence Effect --
+        // -- Save Data (Effects) --
+        
+        // Save Stocks
         useEffect(() => {
           if (isLoaded) {
-            localStorage.setItem(STOCKS_KEY, JSON.stringify(stocks));
-            const recentTransactions = transactions.slice(0, 1000);
-            localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(recentTransactions));
+            StorageService.save(KEYS.STOCKS, stocks);
           }
-        }, [stocks, transactions, isLoaded]);
+        }, [stocks, isLoaded]);
+
+        // Save Transactions
+        useEffect(() => {
+          if (isLoaded) {
+            // Keep only last 1000 transactions to prevent localStorage quota issues
+            const recentTransactions = transactions.slice(0, 1000);
+            StorageService.save(KEYS.TRANSACTIONS, recentTransactions);
+          }
+        }, [transactions, isLoaded]);
+
+        // Save Preferences
+        useEffect(() => {
+          if (isLoaded) {
+            StorageService.save(KEYS.PREFERENCES, prefs);
+          }
+        }, [prefs, isLoaded]);
+
 
         // -- Logic Functions --
         
@@ -733,6 +786,10 @@
                 if (tx.id === id) return { ...tx, notes };
                 return tx;
             }));
+        }, []);
+
+        const updatePrefs = useCallback((newPrefs) => {
+           setPrefs(prev => ({...prev, ...newPrefs}));
         }, []);
 
         const addStock = useCallback((name, normalAmount, orderQuantity) => {
@@ -823,9 +880,11 @@
         const contextValue = {
             stocks,
             transactions,
+            prefs,
             updateStock,
             updateStockConfig,
             updateTransactionNotes,
+            updatePrefs,
             addStock,
             deleteStock,
             getStockStatus,
