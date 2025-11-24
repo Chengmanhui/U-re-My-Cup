@@ -851,10 +851,16 @@
             const jsonString = JSON.stringify(data, null, 2);
             const fileName = `store_backup_${new Date().toISOString().slice(0, 10)}.json`;
 
+            // Helper for Unicode Base64
+            // window.btoa alone fails on unicode characters like Chinese
+            const toBase64 = (str) => {
+                return window.btoa(unescape(encodeURIComponent(str)));
+            };
+
             // 1. Try Native Sharing (Best for Mobile/Android)
             // Note: Using 'text/plain' improves compatibility with Android intent targets (WhatsApp, Drive, etc.)
             // even though the content is JSON.
-            if (navigator.canShare) {
+            if (navigator.canShare && navigator.share) {
                 try {
                     const file = new File([jsonString], fileName, { type: 'text/plain' });
                     if (navigator.canShare({ files: [file] })) {
@@ -872,19 +878,43 @@
                 }
             }
             
-            // 2. Fallback: Direct Download (Desktop / Web)
+            // 2. Fallback: Data URI Download (Android WebView Friendly)
+            // WebViews often fail with Blob URLs but handle Data URIs better.
             try {
-                const blob = new Blob([jsonString], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
+                const base64Data = toBase64(jsonString);
+                const dataUri = `data:application/json;base64,${base64Data}`;
+                
                 const link = document.createElement('a');
-                link.href = url;
+                link.href = dataUri;
                 link.download = fileName;
+                
                 document.body.appendChild(link);
                 link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
+                
+                // Small delay before removal to ensure Android WebView catches the intent
+                setTimeout(() => {
+                    document.body.removeChild(link);
+                }, 100);
+
             } catch (e) {
-                alert("匯出失敗 (Export Failed): " + e.message);
+                console.error("Data URI download failed", e);
+                
+                // 3. Ultimate Fallback: Blob URL
+                try {
+                   const blob = new Blob([jsonString], { type: 'application/json' });
+                   const url = URL.createObjectURL(blob);
+                   const link = document.createElement('a');
+                   link.href = url;
+                   link.download = fileName;
+                   document.body.appendChild(link);
+                   link.click();
+                   setTimeout(() => {
+                       document.body.removeChild(link);
+                       URL.revokeObjectURL(url);
+                   }, 100);
+                } catch (e2) {
+                   alert("匯出失敗 (Export Failed): " + e2.message);
+                }
             }
         };
 
