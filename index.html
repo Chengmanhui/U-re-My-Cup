@@ -175,6 +175,80 @@
         }
       };
 
+      // --- 1b. Data Service (Export/Import) ---
+      // Defined here to avoid module loading errors in standalone usage
+
+      const exportBackup = async (stocks, transactions) => {
+        const data = {
+          app: "StoreKeeper",
+          version: "1.0",
+          createdAt: new Date().toISOString(),
+          stocks: stocks || [],
+          transactions: transactions || []
+        };
+
+        const jsonString = JSON.stringify(data, null, 2);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const fileName = `store_backup_${dateStr}.json`;
+        let shareSuccess = false;
+
+        // Strategy 1: Web Share API
+        try {
+          if (navigator.canShare && window.File) {
+            const file = new File([jsonString], fileName, { type: 'application/json' });
+            const shareData = {
+              files: [file],
+              title: 'StoreKeeper Backup',
+              text: 'Backup created on ' + dateStr
+            };
+            
+            if (navigator.canShare(shareData)) {
+              await navigator.share(shareData);
+              shareSuccess = true;
+            }
+          }
+        } catch (err) {
+          console.log("Share API skipped or cancelled:", err);
+          // Fall through to download
+        }
+
+        // Strategy 2: Blob Download Fallback
+        if (!shareSuccess) {
+          try {
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            
+            setTimeout(() => {
+              if (document.body.contains(link)) {
+                document.body.removeChild(link);
+              }
+              window.URL.revokeObjectURL(url);
+            }, 1500);
+          } catch (e) {
+            console.error("Export failed:", e);
+            alert("匯出失敗 (Export Failed)");
+          }
+        }
+      };
+
+      const validateBackupData = (data) => {
+        if (!data || typeof data !== 'object') return { isValid: false };
+        // Basic validation
+        if (!Array.isArray(data.stocks) || !Array.isArray(data.transactions)) {
+          return { isValid: false };
+        }
+        return { 
+          isValid: true, 
+          stocks: data.stocks, 
+          transactions: data.transactions 
+        };
+      };
+
       // --- 2. Context ---
       const StockContext = createContext();
       const useStock = () => useContext(StockContext);
@@ -207,28 +281,7 @@
         </button>
       );
 
-      const QuickBtn = ({ onClick, type, label, isSecondary }) => {
-        const baseClasses = "flex items-center justify-center rounded-xl font-bold transition-all active:scale-95 touch-manipulation select-none";
-        const sizeClasses = isSecondary ? "w-12 h-12 text-sm" : "w-14 h-14 text-lg";
-        
-        let colorClasses = "";
-        if (type === 'plus') {
-          colorClasses = isSecondary 
-            ? "bg-blue-100 text-blue-700 hover:bg-blue-200" 
-            : "bg-blue-600 text-white shadow-md shadow-blue-200 hover:bg-blue-700";
-        } else {
-          colorClasses = "bg-white border-2 border-red-100 text-red-600 hover:bg-red-50";
-        }
-
-        return (
-          <button onClick={onClick} className={`${baseClasses} ${sizeClasses} ${colorClasses}`}>
-            {label}
-          </button>
-        );
-      };
-
-      // 3.2 View Components
-
+      // 3.2 Inventory View
       const InventoryView = () => {
         const { stocks, getStockStatus } = useStock();
 
@@ -270,10 +323,34 @@
                 );
               })}
             </div>
+            
             {stocks.length === 0 && (
-              <div className="text-center text-gray-500 mt-20">暫無庫存資料</div>
+              <div className="text-center text-gray-500 mt-20">
+                暫無庫存資料
+              </div>
             )}
           </div>
+        );
+      };
+
+      // 3.3 Edit/Manage View
+      const QuickBtn = ({ onClick, type, label, isSecondary }) => {
+        const baseClasses = "flex items-center justify-center rounded-xl font-bold transition-all active:scale-95 touch-manipulation select-none";
+        const sizeClasses = isSecondary ? "w-12 h-12 text-sm" : "w-14 h-14 text-lg";
+        
+        let colorClasses = "";
+        if (type === 'plus') {
+          colorClasses = isSecondary 
+            ? "bg-blue-100 text-blue-700 hover:bg-blue-200" 
+            : "bg-blue-600 text-white shadow-md shadow-blue-200 hover:bg-blue-700";
+        } else {
+          colorClasses = "bg-white border-2 border-red-100 text-red-600 hover:bg-red-50";
+        }
+
+        return (
+          <button onClick={onClick} className={`${baseClasses} ${sizeClasses} ${colorClasses}`}>
+            {label}
+          </button>
         );
       };
 
@@ -281,15 +358,18 @@
         const { stocks, updateStock, updateStockConfig, transactions, addStock, deleteStock } = useStock();
         const [editingId, setEditingId] = useState(null);
         const [historyViewId, setHistoryViewId] = useState(null);
-        const [isAdding, setIsAdding] = useState(false);
         
-        // Form States
+        // Add Stock State
+        const [isAdding, setIsAdding] = useState(false);
         const [newName, setNewName] = useState('');
         const [newNormal, setNewNormal] = useState(10);
         const [newOrderQty, setNewOrderQty] = useState(5);
+
+        // Temp settings
         const [tempNormal, setTempNormal] = useState(10);
         const [tempOrderQty, setTempOrderQty] = useState(5);
-
+        
+        // Date
         const [selectedDate, setSelectedDate] = useState(() => {
           const today = new Date();
           const yyyy = today.getFullYear();
@@ -305,25 +385,39 @@
           setTempOrderQty(currentOrderQty);
         };
 
+        const handleToggleHistory = (id) => {
+          if (editingId === id) setEditingId(null);
+          setHistoryViewId(prev => prev === id ? null : id);
+        };
+
         const handleSaveSettings = (id) => {
           updateStockConfig(id, { normalAmount: tempNormal, orderQuantity: tempOrderQty });
           setEditingId(null);
         };
 
-        const handleDelete = (id) => {
-          deleteStock(id);
-          setEditingId(null);
+        const handleUpdate = (id, delta) => {
+          updateStock(id, delta, selectedDate);
         };
+
+        const handleDelete = (id) => {
+            if(confirm("確定刪除此貨品嗎？記錄也將被刪除。")) {
+               deleteStock(id);
+               setEditingId(null);
+            }
+        }
 
         const submitNewStock = () => {
           if (!newName.trim()) return;
           addStock(newName, newNormal, newOrderQty);
           setIsAdding(false);
-          setNewName(''); setNewNormal(10); setNewOrderQty(5);
+          setNewName('');
+          setNewNormal(10);
+          setNewOrderQty(5);
         };
 
         return (
           <div className="space-y-4 pb-4">
+            
             {/* Date Selector */}
             <div className="sticky top-0 z-10 bg-gray-50 pb-2 pt-1">
               <div className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 flex items-center gap-3">
@@ -331,7 +425,7 @@
                   <Calendar size={20} />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs font-bold text-gray-500 mb-1">入帳日期</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">入帳日期 (Event Date)</label>
                   <input 
                     type="date" 
                     value={selectedDate}
@@ -345,11 +439,13 @@
             <div className="space-y-3">
               {stocks.map((stock) => (
                 <div key={stock.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                  
+                  {/* Top Row */}
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-xl font-bold text-gray-800">{stock.name}</h3>
                     <div className="flex gap-2">
                       <button 
-                        onClick={() => setHistoryViewId(prev => prev === stock.id ? null : stock.id)}
+                        onClick={() => handleToggleHistory(stock.id)}
                         className={`p-2 rounded-full transition-colors ${historyViewId === stock.id ? 'bg-purple-100 text-purple-600' : 'bg-gray-50 text-gray-400 hover:text-gray-600'}`}
                       >
                         <History size={20} />
@@ -368,635 +464,534 @@
                     <div className="bg-purple-50 rounded-lg p-3 mb-4 border border-purple-100 animate-fade-in">
                         <div className="flex justify-between items-center mb-2 border-b border-purple-200 pb-1">
                           <h4 className="text-xs font-bold text-purple-800">最近記錄</h4>
-                          <button onClick={() => setHistoryViewId(null)}><X size={16} className="text-purple-400"/></button>
+                          <button onClick={() => setHistoryViewId(null)} className="text-purple-400 hover:text-purple-600">
+                            <X size={16}/>
+                          </button>
                         </div>
                         <div className="max-h-48 overflow-y-auto">
-                          <ul className="space-y-2">
-                            {transactions.filter(t => t.stockId === stock.id).slice(0, 20).map(tx => (
-                              <li key={tx.id} className="flex justify-between items-center text-sm bg-white p-2 rounded shadow-sm">
-                                  <span className="text-gray-500 text-xs">{tx.date}</span>
-                                  <span className={`font-bold font-mono ${tx.change > 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                                    {tx.change > 0 ? '+' : ''}{tx.change}
-                                  </span>
-                              </li>
-                            ))}
-                          </ul>
+                          {(() => {
+                            const stockHistory = transactions.filter(t => t.stockId === stock.id);
+                            if (stockHistory.length === 0) return <div className="text-center text-xs text-gray-400 py-3">暫無記錄</div>;
+                            return (
+                              <ul className="space-y-2">
+                                {stockHistory.slice(0, 20).map(tx => (
+                                  <li key={tx.id} className="flex justify-between items-center text-sm bg-white p-2 rounded shadow-sm">
+                                    <span className="text-gray-500 text-xs">{tx.date}</span>
+                                    <span className={`font-bold font-mono ${tx.change > 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                                        {tx.change > 0 ? '+' : ''}{tx.change}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            );
+                          })()}
                         </div>
                     </div>
                   )}
 
-                  {/* Settings Mode vs Edit Mode */}
+                  {/* Settings Mode */}
                   {editingId === stock.id ? (
-                    <div className="bg-gray-50 p-4 rounded-lg mb-4 border border-gray-200 animate-fade-in">
+                    <div className="bg-gray-50 p-4 rounded-lg mb-4 border border-gray-200 animate-fade-in shadow-inner">
+                      <h4 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                        <Settings size={16} /> 設定
+                      </h4>
                       <div className="grid grid-cols-2 gap-3 mb-4">
                         <div>
-                          <label className="block text-xs font-bold text-gray-500 mb-1">標準數量</label>
-                          <input type="number" value={tempNormal} onChange={(e) => setTempNormal(parseInt(e.target.value)||0)} className="w-full border border-gray-300 rounded-lg px-3 py-2 font-bold" />
+                          <label className="block text-xs font-bold text-gray-500 mb-1">標準數量 (Alert)</label>
+                          <input 
+                            type="number" 
+                            value={tempNormal}
+                            onChange={(e) => setTempNormal(parseInt(e.target.value) || 0)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-lg font-bold text-gray-800 outline-none"
+                            min="1"
+                          />
                         </div>
                         <div>
-                          <label className="block text-xs font-bold text-gray-500 mb-1">按鈕數值</label>
-                          <input type="number" value={tempOrderQty} onChange={(e) => setTempOrderQty(parseInt(e.target.value)||0)} className="w-full border border-gray-300 rounded-lg px-3 py-2 font-bold" />
+                          <label className="block text-xs font-bold text-gray-500 mb-1">入貨按鈕數值</label>
+                          <input 
+                            type="number" 
+                            value={tempOrderQty}
+                            onChange={(e) => setTempOrderQty(parseInt(e.target.value) || 0)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-lg font-bold text-gray-800 outline-none"
+                            min="1"
+                          />
                         </div>
                       </div>
-                      <div className="flex justify-between">
-                        <button onClick={() => handleDelete(stock.id)} className="text-red-600 bg-red-50 px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1"><Trash2 size={16}/> 刪除</button>
+                      <div className="flex items-center justify-between pt-2">
+                        <button 
+                          onClick={() => handleDelete(stock.id)}
+                          className="bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg flex items-center gap-1 font-bold text-sm"
+                        >
+                          <Trash2 size={16} /> 刪除
+                        </button>
                         <div className="flex gap-2">
-                           <button onClick={() => setEditingId(null)} className="bg-white border border-gray-300 px-3 py-2 rounded-lg text-sm font-bold">取消</button>
-                           <button onClick={() => handleSaveSettings(stock.id)} className="bg-brand-600 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1"><Save size={16}/> 儲存</button>
+                          <button onClick={() => setEditingId(null)} className="bg-white text-gray-600 border border-gray-300 px-4 py-2 rounded-lg font-bold text-sm">
+                            <X size={16} /> 取消
+                          </button>
+                          <button onClick={() => handleSaveSettings(stock.id)} className="bg-brand-600 text-white px-4 py-2 rounded-lg font-bold text-sm">
+                            <Save size={16} /> 儲存
+                          </button>
                         </div>
                       </div>
                     </div>
                   ) : (
+                    /* Edit Mode Controls */
                     <div className="flex items-center justify-between gap-2">
-                       <div className="flex gap-2">
-                         <QuickBtn onClick={() => updateStock(stock.id, -1, selectedDate)} type="minus" label="-1" />
-                       </div>
-                       <div className="flex flex-col items-center min-w-[60px]">
+                      <div className="flex gap-2">
+                        <QuickBtn onClick={() => handleUpdate(stock.id, -1)} type="minus" label="-1" />
+                      </div>
+                      <div className="flex flex-col items-center min-w-[60px]">
                           <span className="text-2xl font-black text-gray-800">{stock.quantity}</span>
                           <span className="text-xs text-gray-400">現量</span>
-                       </div>
-                       <div className="flex gap-2">
-                         <QuickBtn onClick={() => updateStock(stock.id, 1, selectedDate)} type="plus" label="+1" />
-                         <QuickBtn onClick={() => updateStock(stock.id, stock.orderQuantity, selectedDate)} type="plus" label={`+${stock.orderQuantity}`} isSecondary />
-                       </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <QuickBtn onClick={() => handleUpdate(stock.id, 1)} type="plus" label="+1" />
+                        <QuickBtn 
+                            onClick={() => handleUpdate(stock.id, stock.orderQuantity)} 
+                            type="plus" 
+                            label={`+${stock.orderQuantity}`} 
+                            isSecondary 
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
               ))}
 
-              <button onClick={() => setIsAdding(true)} className="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 font-bold flex items-center justify-center gap-2 hover:bg-gray-50">
+              <button 
+                onClick={() => setIsAdding(true)}
+                className="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 font-bold flex items-center justify-center gap-2 hover:bg-gray-50"
+              >
                 <Plus size={24} /> 新增貨品
               </button>
             </div>
 
             {/* Add Stock Modal */}
             {isAdding && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-                <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl">
-                  <h3 className="font-bold text-lg mb-4">新增貨品</h3>
-                  <div className="space-y-4 mb-6">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1">貨品名稱</label>
-                      <input type="text" placeholder="例如: 珍珠" value={newName} onChange={e => setNewName(e.target.value)} className="w-full border rounded-lg px-3 py-2 font-bold text-lg" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                       <div>
-                           <label className="block text-xs font-bold text-gray-500 mb-1">標準數量</label>
-                           <input type="number" placeholder="10" value={newNormal} onChange={e => setNewNormal(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2 font-bold" />
-                           <p className="text-[10px] text-gray-400 mt-1 leading-tight">大幅低於此數量時會顯示警報</p>
-                       </div>
-                       <div>
-                           <label className="block text-xs font-bold text-gray-500 mb-1">按鈕數值</label>
-                           <input type="number" placeholder="5" value={newOrderQty} onChange={e => setNewOrderQty(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2 font-bold" />
-                           <p className="text-[10px] text-gray-400 mt-1 leading-tight">快速入貨按鈕增加的數量</p>
-                       </div>
-                    </div>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in">
+                  <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl">
+                      <h3 className="font-bold text-lg text-gray-800 mb-4 flex items-center gap-2">
+                          <Plus className="text-brand-500" /> 新增貨品
+                      </h3>
+                      <div className="space-y-4">
+                          <div>
+                              <label className="block text-xs font-bold text-gray-500 mb-1">貨品名稱</label>
+                              <input 
+                                  type="text" 
+                                  value={newName} 
+                                  onChange={e => setNewName(e.target.value)}
+                                  placeholder="例如: 綠茶"
+                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-lg font-bold text-gray-800 outline-none"
+                                  autoFocus
+                              />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-500 mb-1">標準數量</label>
+                                  <input 
+                                      type="number" 
+                                      value={newNormal}
+                                      onChange={e => setNewNormal(parseInt(e.target.value) || 0)}
+                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 font-bold text-gray-800 outline-none"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-500 mb-1">入貨按鈕數值</label>
+                                  <input 
+                                      type="number" 
+                                      value={newOrderQty}
+                                      onChange={e => setNewOrderQty(parseInt(e.target.value) || 0)}
+                                      className="w-full border border-gray-300 rounded-lg px-3 py-2 font-bold text-gray-800 outline-none"
+                                  />
+                              </div>
+                          </div>
+                      </div>
+                      <div className="flex gap-2 justify-end mt-6">
+                          <button onClick={() => setIsAdding(false)} className="bg-gray-100 text-gray-600 px-4 py-3 rounded-xl font-bold flex-1">取消</button>
+                          <button onClick={submitNewStock} disabled={!newName.trim()} className="bg-brand-600 text-white px-4 py-3 rounded-xl font-bold flex-1">確認新增</button>
+                      </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setIsAdding(false)} className="flex-1 bg-gray-100 py-3 rounded-xl font-bold text-gray-600">取消</button>
-                    <button onClick={submitNewStock} disabled={!newName.trim()} className="flex-1 bg-brand-600 py-3 rounded-xl font-bold text-white">確認</button>
-                  </div>
-                </div>
               </div>
             )}
           </div>
         );
       };
 
+      // 3.4 Alerts View
       const AlertsView = () => {
         const { stocks, transactions, getStockStatus } = useStock();
+        const criticalStocks = stocks.filter(s => getStockStatus(s.quantity, s.normalAmount) === 'CRITICAL');
+        const warningStocks = stocks.filter(s => getStockStatus(s.quantity, s.normalAmount) === 'WARNING');
         
-        const alerts = useMemo(() => {
-          const critical = [], warning = [];
-          stocks.forEach(s => {
-            const status = getStockStatus(s.quantity, s.normalAmount);
-            if (status === 'CRITICAL') critical.push(s);
-            else if (status === 'WARNING') warning.push(s);
-          });
-          return { critical, warning };
+        const chartData = useMemo(() => {
+          return stocks.map(s => ({
+            name: s.name,
+            current: s.quantity,
+            normal: s.normalAmount,
+            status: getStockStatus(s.quantity, s.normalAmount)
+          }));
         }, [stocks, getStockStatus]);
 
-        const chartData = useMemo(() => stocks.map(s => ({
-          name: s.name, current: s.quantity, normal: s.normalAmount, status: getStockStatus(s.quantity, s.normalAmount)
-        })), [stocks, getStockStatus]);
-
-        const consumptionData = useMemo(() => {
-          const stats = {};
-          const todayTime = new Date().setHours(0,0,0,0);
-          stocks.forEach(stock => {
-            const outTx = transactions.filter(t => t.stockId === stock.id && t.change < 0);
-            if (outTx.length === 0) { stats[stock.id] = "---"; return; }
-            const totalUsed = outTx.reduce((acc, c) => acc + Math.abs(c.change), 0);
-            const dates = outTx.map(t => new Date(t.date).getTime());
-            const daysSpan = Math.ceil((todayTime - Math.min(...dates)) / (86400000)) + 1;
-            const dailyAvg = totalUsed / daysSpan;
-            const daysToFinish = dailyAvg > 0 ? stock.normalAmount / dailyAvg : 999;
-            stats[stock.id] = daysToFinish > 999 ? "> 999" : daysToFinish < 10 ? daysToFinish.toFixed(1) : Math.round(daysToFinish);
-          });
-          return stats;
-        }, [stocks, transactions]);
+        const chartHeight = Math.max(300, stocks.length * 40);
 
         return (
           <div className="space-y-8 pb-4">
             <div className="space-y-4">
               <h2 className="text-lg font-bold text-gray-700 border-l-4 border-gray-800 pl-3">需要關注</h2>
-              {alerts.critical.length === 0 && alerts.warning.length === 0 && (
-                 <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center text-green-800 font-bold">
-                    <CheckCircle2 size={32} className="mx-auto mb-2"/> 全部庫存充足！
+              
+              {criticalStocks.length === 0 && warningStocks.length === 0 && (
+                 <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+                   <div className="flex justify-center mb-2 text-green-500"><CheckCircle2 size={48} /></div>
+                   <p className="text-green-800 font-bold text-lg">全部庫存充足！</p>
                  </div>
               )}
-              {alerts.critical.map(s => (
-                <div key={s.id} className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg flex items-center gap-3">
-                  <AlertCircle className="text-red-600"/>
-                  <div><h3 className="font-bold text-red-900">{s.name}</h3><p className="text-red-700 text-xs">嚴重不足: {s.quantity} (標準: {s.normalAmount})</p></div>
+
+              {criticalStocks.map(stock => (
+                <div key={stock.id} className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-red-200 p-2 rounded-full text-red-700"><AlertCircle size={24} /></div>
+                    <div>
+                      <h3 className="font-bold text-red-900 text-lg">{stock.name}</h3>
+                      <p className="text-red-700 text-sm">嚴重不足！僅剩 {stock.quantity} (標準: {stock.normalAmount})</p>
+                    </div>
+                  </div>
                 </div>
               ))}
-              {alerts.warning.map(s => (
-                <div key={s.id} className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-lg flex items-center gap-3">
-                  <AlertTriangle className="text-yellow-600"/>
-                  <div><h3 className="font-bold text-yellow-900">{s.name}</h3><p className="text-yellow-700 text-xs">庫存偏低: {s.quantity}</p></div>
+
+              {warningStocks.map(stock => (
+                <div key={stock.id} className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-lg shadow-sm flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-yellow-200 p-2 rounded-full text-yellow-800"><AlertTriangle size={24} /></div>
+                    <div>
+                      <h3 className="font-bold text-yellow-900 text-lg">{stock.name}</h3>
+                      <p className="text-yellow-700 text-sm">庫存偏低。剩餘 {stock.quantity} (標準: {stock.normalAmount})</p>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
 
-            <div className="h-[300px] bg-white p-2 rounded-xl border border-gray-100">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} layout="vertical" margin={{left: 10, right: 10}}>
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" width={60} tick={{fontSize: 12, fontWeight: 'bold'}} interval={0} />
-                  <Tooltip />
-                  <Bar dataKey="current" barSize={20} radius={[0,4,4,0]}>
-                    {chartData.map((e, i) => <Cell key={i} fill={e.status === 'CRITICAL' ? '#ef4444' : e.status === 'WARNING' ? '#eab308' : '#22c55e'} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            
             <div>
-               <h2 className="text-lg font-bold text-gray-700 border-l-4 border-indigo-500 pl-3 mb-4">消耗預測 (天數)</h2>
-               <div className="grid grid-cols-3 gap-3">
-                 {stocks.map(s => (
-                   <div key={s.id} className="bg-white p-2 rounded-xl border text-center">
-                      <div className="font-bold text-gray-800 text-sm truncate">{s.name}</div>
-                      <div className="text-xl font-black text-indigo-600">{consumptionData[s.id]}</div>
-                   </div>
-                 ))}
-               </div>
+              <h2 className="text-lg font-bold text-gray-700 border-l-4 border-brand-500 pl-3 mb-4">整體統計</h2>
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100" style={{ height: chartHeight }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="name" type="category" width={70} interval={0} tick={{fill: '#4b5563', fontSize: 14, fontWeight: 'bold'}} />
+                    <Tooltip cursor={{fill: 'transparent'}} />
+                    <Bar dataKey="current" radius={[0, 4, 4, 0]} barSize={20}>
+                      {chartData.map((entry, index) => {
+                        let color = '#22c55e';
+                        if (entry.status === 'WARNING') color = '#eab308';
+                        if (entry.status === 'CRITICAL') color = '#ef4444';
+                        return <Cell key={`cell-${index}`} fill={color} />;
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         );
       };
 
+      // 3.5 History View
       const HistoryView = () => {
-        const { transactions, stocks, updateTransactionNotes, prefs, updatePrefs } = useStock();
-        
-        // Initialize state from prefs or defaults
-        const [sortDesc, setSortDesc] = useState(prefs?.sortDesc ?? true);
-        const [filterType, setFilterType] = useState(prefs?.filterType ?? 'ALL');
-        const [filterStockIds, setFilterStockIds] = useState([]); // Don't persist detailed filters for now, just main view prefs
-        
-        const [showFilters, setShowFilters] = useState(false);
+        const { transactions, stocks, updateTransactionNotes } = useStock();
+        const [sortDesc, setSortDesc] = useState(true);
         const [editingNote, setEditingNote] = useState(null);
+        const [filterStockIds, setFilterStockIds] = useState([]);
+        const [filterType, setFilterType] = useState('ALL');
+        const [showFilters, setShowFilters] = useState(false);
 
-        // Update prefs when local state changes
-        useEffect(() => {
-          updatePrefs({ sortDesc, filterType });
-        }, [sortDesc, filterType, updatePrefs]);
+        const toggleStockFilter = (id) => {
+          setFilterStockIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+        };
+        const clearStockFilter = () => setFilterStockIds([]);
 
-        const filtered = useMemo(() => transactions.filter(tx => {
-          if (filterStockIds.length > 0 && !filterStockIds.includes(tx.stockId)) return false;
-          if (filterType === 'IN' && tx.change <= 0) return false;
-          if (filterType === 'OUT' && tx.change >= 0) return false;
-          return true;
-        }).sort((a,b) => sortDesc ? b.timestamp - a.timestamp : a.timestamp - b.timestamp), [transactions, filterStockIds, filterType, sortDesc]);
-
-        const grouped = useMemo(() => {
-          const g = {};
-          filtered.forEach(tx => {
-            const k = tx.date ? tx.date.slice(0,7) : 'Unknown';
-            if (!g[k]) g[k] = [];
-            g[k].push(tx);
+        const filteredTransactions = useMemo(() => {
+          return transactions.filter(tx => {
+            if (filterStockIds.length > 0 && !filterStockIds.includes(tx.stockId)) return false;
+            if (filterType === 'IN' && tx.change <= 0) return false;
+            if (filterType === 'OUT' && tx.change >= 0) return false;
+            return true;
           });
-          return g;
-        }, [filtered]);
+        }, [transactions, filterStockIds, filterType]);
+
+        const groupedTransactions = useMemo(() => {
+          const sorted = [...filteredTransactions].sort((a, b) => {
+            const dateA = new Date(a.date).getTime();
+            const dateB = new Date(b.date).getTime();
+            if (dateA !== dateB) return sortDesc ? dateB - dateA : dateA - dateB;
+            return sortDesc ? b.timestamp - a.timestamp : a.timestamp - b.timestamp;
+          });
+          const groups = {};
+          sorted.forEach(tx => {
+            const monthKey = tx.date ? tx.date.substring(0, 7) : 'Unknown'; 
+            if (!groups[monthKey]) groups[monthKey] = [];
+            groups[monthKey].push(tx);
+          });
+          return groups;
+        }, [filteredTransactions, sortDesc]);
+
+        const monthKeys = Object.keys(groupedTransactions).sort((a, b) => {
+           if (a === 'Unknown') return 1; if (b === 'Unknown') return -1;
+           return sortDesc ? b.localeCompare(a) : a.localeCompare(b);
+        });
+
+        const handleSaveNote = () => {
+          if (editingNote) {
+            updateTransactionNotes(editingNote.id, editingNote.text);
+            setEditingNote(null);
+          }
+        };
 
         return (
-          <div className="space-y-4 pb-4">
-             {/* Filter Bar */}
-             <div className="sticky top-0 z-30 bg-gray-50/95 backdrop-blur shadow-sm -mx-4 px-4 py-2 mb-2">
-                <div className="flex gap-2">
-                   <button onClick={() => setSortDesc(!sortDesc)} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg border shadow-sm">{sortDesc ? <ArrowDown size={18}/> : <ArrowUp size={18}/>}</button>
-                   <div className="flex-1 bg-gray-200 p-1 rounded-lg flex text-xs font-bold text-gray-600">
-                      {['ALL', 'IN', 'OUT'].map(t => (
-                        <button key={t} onClick={() => setFilterType(t)} className={`flex-1 rounded flex items-center justify-center ${filterType===t ? 'bg-white shadow-sm text-gray-900' : ''}`}>
-                          {t === 'ALL' ? '全部' : t === 'IN' ? '入貨' : '出貨'}
-                        </button>
-                      ))}
-                   </div>
+          <div className="flex flex-col min-h-full relative">
+             {editingNote && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in">
+                  <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl">
+                     <h3 className="font-bold text-lg text-gray-800 mb-3 flex items-center gap-2">
+                        <StickyNote className="text-yellow-500" /> 編輯備註
+                     </h3>
+                     <textarea 
+                        className="w-full border-2 border-gray-200 rounded-xl p-3 min-h-[120px] outline-none resize-none"
+                        value={editingNote.text}
+                        onChange={(e) => setEditingNote({...editingNote, text: e.target.value})}
+                        autoFocus
+                     />
+                     <div className="flex justify-end gap-3 mt-4">
+                        <button onClick={() => setEditingNote(null)} className="px-4 py-2 rounded-xl font-bold text-gray-500 bg-gray-100">取消</button>
+                        <button onClick={handleSaveNote} className="px-4 py-2 rounded-xl font-bold text-white bg-brand-600 shadow-lg">儲存</button>
+                     </div>
+                  </div>
                 </div>
-                <div className="mt-2 flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
-                   <button onClick={() => setShowFilters(!showFilters)} className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border ${showFilters ? 'bg-brand-50 border-brand-200 text-brand-600' : 'bg-white'}`}>
-                      <Filter size={14}/> 篩選
+             )}
+
+             <div className="sticky top-0 z-30 bg-gray-50/95 backdrop-blur-sm shadow-sm transition-all px-3 py-2">
+                <div className="flex gap-3">
+                  <button onClick={() => setSortDesc(!sortDesc)} className="flex items-center justify-center w-12 h-12 bg-white rounded-xl border border-gray-200 text-gray-600 shadow-sm">
+                    {sortDesc ? <ArrowDown size={20} /> : <ArrowUp size={20} />}
+                  </button>
+                  <div className="flex-1 bg-gray-200 p-1 rounded-xl flex text-sm font-bold text-gray-600 relative">
+                    <button onClick={() => setFilterType('ALL')} className={`flex-1 rounded-lg ${filterType === 'ALL' ? 'bg-white text-gray-900 shadow-sm' : ''}`}>全部</button>
+                    <button onClick={() => setFilterType('IN')} className={`flex-1 rounded-lg flex items-center justify-center gap-1 ${filterType === 'IN' ? 'bg-white text-blue-600 shadow-sm' : ''}`}><ArrowUpRight size={16} /> 入貨</button>
+                    <button onClick={() => setFilterType('OUT')} className={`flex-1 rounded-lg flex items-center justify-center gap-1 ${filterType === 'OUT' ? 'bg-white text-orange-600 shadow-sm' : ''}`}><ArrowDownLeft size={16} /> 出貨</button>
+                  </div>
+                </div>
+             </div>
+
+             <div className="px-3 py-3 bg-gray-50 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                   <FilterChip label="全部貨品" isActive={filterStockIds.length === 0} onClick={clearStockFilter} />
+                   <button onClick={() => setShowFilters(!showFilters)} className={`px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2 border-2 ${showFilters ? 'bg-white border-brand-200 text-brand-600' : 'bg-white border-gray-200 text-gray-500'}`}>
+                      <Filter size={16} /> {showFilters ? '收起' : '篩選'}
+                      {filterStockIds.length > 0 && <span className="bg-brand-600 text-white text-[10px] px-1.5 rounded-full">{filterStockIds.length}</span>}
                    </button>
-                   {filterStockIds.length > 0 && <button onClick={() => setFilterStockIds([])} className="text-xs text-red-500 font-bold px-2">清除 ({filterStockIds.length})</button>}
                 </div>
                 {showFilters && (
-                  <div className="mt-2 flex flex-wrap gap-2 animate-fade-in">
-                     {stocks.map(s => (
-                       <FilterChip key={s.id} label={s.name} isActive={filterStockIds.includes(s.id)} onClick={() => setFilterStockIds(prev => prev.includes(s.id) ? prev.filter(i=>i!==s.id) : [...prev, s.id])} />
-                     ))}
-                  </div>
+                    <div className="animate-fade-in mt-3 border-t border-gray-100 pt-3">
+                       <div className="flex flex-wrap gap-2">
+                         {stocks.map(stock => (
+                           <FilterChip key={stock.id} label={stock.name} isActive={filterStockIds.includes(stock.id)} onClick={() => toggleStockFilter(stock.id)} />
+                         ))}
+                       </div>
+                    </div>
                 )}
              </div>
 
-             {/* List */}
-             {Object.keys(grouped).length === 0 && <div className="text-center text-gray-400 py-10">暫無記錄</div>}
-             
-             {Object.keys(grouped).sort((a,b) => sortDesc ? b.localeCompare(a) : a.localeCompare(b)).map(month => (
-               <div key={month} className="space-y-2">
-                  <div className="sticky top-[100px] z-20 inline-block bg-brand-500 text-white px-2 py-1 rounded text-xs font-bold shadow-sm">{month}</div>
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                    {grouped[month].map((tx, i) => (
-                       <div key={tx.id} className={`p-3 ${i !== grouped[month].length-1 ? 'border-b border-gray-50' : ''}`}>
-                          <div className="flex justify-between items-center">
-                             <div className="flex items-center gap-3">
-                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${tx.change>0 ? 'bg-blue-50 border-blue-100 text-blue-600' : 'bg-orange-50 border-orange-100 text-orange-600'}`}>
-                                  {tx.change>0 ? <ArrowUpRight size={20}/> : <ArrowDownLeft size={20}/>}
-                                </div>
-                                <div>
-                                  <div className="font-bold text-gray-800">{tx.stockName}</div>
-                                  <div className="text-[10px] text-gray-400">{tx.date}</div>
-                                </div>
-                             </div>
-                             <div className={`text-xl font-black font-mono ${tx.change>0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                               {tx.change>0?'+':''}{tx.change}
-                             </div>
-                          </div>
-                          <div className="mt-2 pl-[52px]">
-                             {tx.notes ? (
-                               <div onClick={() => setEditingNote({id: tx.id, text: tx.notes})} className="bg-yellow-50 p-2 rounded-lg text-xs text-yellow-800 flex gap-1 items-start cursor-pointer"><StickyNote size={12} className="shrink-0 mt-0.5"/> {tx.notes}</div>
-                             ) : (
-                               <button onClick={() => setEditingNote({id: tx.id, text: ''})} className="text-[10px] text-gray-400 flex items-center gap-1 bg-gray-50 px-2 py-1 rounded"><MessageSquarePlus size={12}/> 備註</button>
-                             )}
-                          </div>
-                       </div>
-                    ))}
-                  </div>
-               </div>
-             ))}
-
-             {/* Note Modal */}
-             {editingNote && (
-               <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-                 <div className="bg-white rounded-2xl p-4 w-full max-w-sm">
-                    <h3 className="font-bold text-lg mb-2">編輯備註</h3>
-                    <textarea className="w-full border rounded-xl p-3 min-h-[100px]" value={editingNote.text} onChange={e => setEditingNote({...editingNote, text: e.target.value})} autoFocus></textarea>
-                    <div className="flex justify-end gap-2 mt-3">
-                       <button onClick={() => setEditingNote(null)} className="px-3 py-2 bg-gray-100 rounded-lg text-sm font-bold">取消</button>
-                       <button onClick={() => {updateTransactionNotes(editingNote.id, editingNote.text); setEditingNote(null)}} className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-bold">儲存</button>
-                    </div>
-                 </div>
-               </div>
-             )}
+             <div className="px-4 pt-2 pb-4 space-y-6">
+                {monthKeys.length === 0 ? (
+                   <div className="flex flex-col items-center justify-center text-gray-400 py-20"><p className="font-bold text-lg">暫無相關記錄</p></div>
+                ) : (
+                   monthKeys.map(month => (
+                     <div key={month} className="animate-fade-in">
+                        <div className="flex items-center gap-2 mb-3 pl-1 sticky top-[70px] z-20">
+                           <div className="bg-brand-500 text-white p-1.5 rounded-lg shadow-sm"><Calendar size={16}/></div>
+                           <h3 className="font-bold text-gray-700 text-lg bg-gray-50/90 px-2 rounded-lg">{month}</h3>
+                        </div>
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                           {groupedTransactions[month].map((tx, index) => {
+                              const isIncoming = tx.change > 0;
+                              return (
+                              <div key={tx.id} className={`p-4 transition-colors hover:bg-gray-50 ${index !== groupedTransactions[month].length - 1 ? 'border-b border-gray-50' : ''}`}>
+                                 <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-4">
+                                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border-2 ${isIncoming ? 'bg-blue-50 border-blue-100 text-blue-600' : 'bg-orange-50 border-orange-100 text-orange-600'}`}>
+                                          {isIncoming ? <ArrowUpRight size={24} /> : <ArrowDownLeft size={24} />}
+                                       </div>
+                                       <div>
+                                          <div className="font-bold text-gray-800 text-lg">{tx.stockName}</div>
+                                          <div className="text-xs font-medium text-gray-400 mt-1">{tx.date}</div>
+                                       </div>
+                                    </div>
+                                    <div className={`text-2xl font-black font-mono tracking-tight ${isIncoming ? 'text-blue-600' : 'text-orange-600'}`}>
+                                       {isIncoming ? '+' : ''}{tx.change}
+                                    </div>
+                                 </div>
+                                 {/* Notes Logic */}
+                                 <div className="mt-2 pl-[64px]">
+                                    {tx.notes ? (
+                                      <button onClick={() => setEditingNote({id: tx.id, text: tx.notes || ''})} className="w-full text-left">
+                                        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-2 rounded-lg text-sm flex gap-2 items-start hover:shadow-sm">
+                                           <StickyNote size={16} className="mt-0.5 shrink-0 text-yellow-600" />
+                                           <span className="break-all font-medium">{tx.notes}</span>
+                                        </div>
+                                      </button>
+                                    ) : (
+                                      <button onClick={() => setEditingNote({id: tx.id, text: ''})} className="text-gray-400 text-xs flex items-center gap-1.5 hover:text-brand-600 hover:bg-brand-50 px-2 py-1.5 rounded-lg">
+                                         <MessageSquarePlus size={14} /> 添加備註
+                                      </button>
+                                    )}
+                                 </div>
+                              </div>
+                           )})}
+                        </div>
+                     </div>
+                   ))
+                )}
+             </div>
           </div>
         );
       };
 
-      // --- 4. Main App Logic ---
-      function App() {
-        // -- Global State Variables --
+      // --- 4. Main App ---
+      const App = () => {
         const [stocks, setStocks] = useState([]);
         const [transactions, setTransactions] = useState([]);
-        const [prefs, setPrefs] = useState({ sortDesc: true, filterType: 'ALL' });
-        
         const [currentView, setCurrentView] = useState('INVENTORY');
         const [isLoaded, setIsLoaded] = useState(false);
         const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-        
-        // Refs
         const fileInputRef = useRef(null);
 
-        // -- Helper Functions (Logic) --
-        const generateInitialStocks = () => {
-          return INITIAL_STOCK_NAMES.map((name, index) => ({
-            id: `stock-${index}`,
-            name,
-            quantity: 0,
-            normalAmount: 10,
-            orderQuantity: DEFAULT_ORDER_QUANTITIES[name] || 5,
-            orderCost: 0
-          }));
-        };
+        // Load Data
+        useEffect(() => {
+          const savedStocks = StorageService.load(KEYS.STOCKS);
+          const savedTx = StorageService.load(KEYS.TRANSACTIONS, []);
+          
+          if (savedStocks) {
+             const migrated = savedStocks.map(s => {
+               const targetDefault = DEFAULT_ORDER_QUANTITIES[s.name] || 5;
+               const currentOrderQty = s.orderQuantity !== undefined ? s.orderQuantity : 5;
+               return { ...s, orderQuantity: currentOrderQty === 5 ? targetDefault : currentOrderQty };
+             });
+             setStocks(migrated);
+          } else {
+             // Generate initials
+             const init = INITIAL_STOCK_NAMES.map((name, i) => ({
+               id: `stock-${i}`, name, quantity: 0, normalAmount: 10, orderQuantity: DEFAULT_ORDER_QUANTITIES[name] || 5
+             }));
+             setStocks(init);
+          }
+          setTransactions(savedTx);
+          setIsLoaded(true);
+        }, []);
 
-        const getStockStatus = (current, normal) => {
+        // Save Data
+        useEffect(() => {
+          if (isLoaded) {
+            StorageService.save(KEYS.STOCKS, stocks);
+            StorageService.save(KEYS.TRANSACTIONS, transactions);
+          }
+        }, [stocks, transactions, isLoaded]);
+
+        const updateStock = useCallback((id, delta, date) => {
+          const stock = stocks.find(s => s.id === id);
+          if (!stock) return;
+          setStocks(prev => prev.map(item => item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item));
+          const newTx = {
+            id: Date.now().toString() + Math.random().toString().slice(2),
+            stockId: id, stockName: stock.name, change: delta, date: date || new Date().toISOString().split('T')[0], timestamp: Date.now()
+          };
+          setTransactions(prev => [newTx, ...prev]);
+        }, [stocks]);
+
+        const updateStockConfig = useCallback((id, config) => {
+          setStocks(prev => prev.map(item => item.id === id ? { 
+            ...item, 
+            normalAmount: config.normalAmount !== undefined ? Math.max(1, config.normalAmount) : item.normalAmount,
+            orderQuantity: config.orderQuantity !== undefined ? Math.max(1, config.orderQuantity) : item.orderQuantity
+          } : item));
+        }, []);
+
+        const updateTransactionNotes = useCallback((id, notes) => {
+          setTransactions(prev => prev.map(tx => tx.id === id ? { ...tx, notes } : tx));
+        }, []);
+
+        const addStock = useCallback((name, normalAmount, orderQuantity) => {
+          setStocks(prev => [...prev, {
+            id: `stock-${Date.now()}`, name, quantity: 0, 
+            normalAmount: Math.max(1, normalAmount), 
+            orderQuantity: Math.max(1, orderQuantity)
+          }]);
+        }, []);
+
+        const deleteStock = useCallback((id) => {
+          setStocks(prev => prev.filter(s => s.id !== id));
+          setTransactions(prev => prev.filter(t => t.stockId !== id));
+        }, []);
+
+        const getStockStatus = useCallback((current, normal) => {
           const ratio = current / normal;
           if (ratio < 0.3) return 'CRITICAL';
           if (ratio < 0.5) return 'WARNING';
           return 'NORMAL';
-        };
-
-        // -- Reusable Load Data Logic --
-        const refreshData = useCallback(() => {
-            try {
-                // 1. Load Stocks
-                const savedStocks = StorageService.load(KEYS.STOCKS);
-                if (savedStocks) {
-                    const migratedStocks = savedStocks.map(s => {
-                        const targetDefault = DEFAULT_ORDER_QUANTITIES[s.name] || 5;
-                        const currentOrderQty = s.orderQuantity !== undefined ? s.orderQuantity : 5;
-                        return {
-                        ...s,
-                        orderQuantity: currentOrderQty === 5 ? targetDefault : currentOrderQty,
-                        orderCost: s.orderCost ?? 0
-                        };
-                    });
-                    setStocks(migratedStocks);
-                } else {
-                    // Only set initial if first run (LS is empty)
-                    // If we are just refreshing, we respect LS, but if LS is null (rare), reset.
-                    setStocks(generateInitialStocks());
-                }
-
-                // 2. Load Transactions
-                const savedTransactions = StorageService.load(KEYS.TRANSACTIONS, []);
-                setTransactions(savedTransactions);
-
-                // 3. Load Preferences
-                const savedPrefs = StorageService.load(KEYS.PREFERENCES, { sortDesc: true, filterType: 'ALL' });
-                setPrefs(savedPrefs);
-            } catch (e) {
-                console.error("Error refreshing data:", e);
-            }
-        }, []);
-
-        // -- Load Data (Effects) --
-        
-        // 1. Initial Load
-        useEffect(() => {
-          refreshData();
-          setIsLoaded(true);
-        }, [refreshData]);
-
-        // 2. Refresh on Page Turn (View Change)
-        useEffect(() => {
-            if (isLoaded) {
-                refreshData();
-            }
-        }, [currentView, isLoaded, refreshData]);
-
-        // -- Save Data (Effects) --
-        
-        // Save Stocks
-        useEffect(() => {
-          if (isLoaded) {
-            StorageService.save(KEYS.STOCKS, stocks);
-          }
-        }, [stocks, isLoaded]);
-
-        // Save Transactions
-        useEffect(() => {
-          if (isLoaded) {
-            // Keep only last 1000 transactions to prevent localStorage quota issues
-            const recentTransactions = transactions.slice(0, 1000);
-            StorageService.save(KEYS.TRANSACTIONS, recentTransactions);
-          }
-        }, [transactions, isLoaded]);
-
-        // Save Preferences
-        useEffect(() => {
-          if (isLoaded) {
-            StorageService.save(KEYS.PREFERENCES, prefs);
-          }
-        }, [prefs, isLoaded]);
-
-
-        // -- Logic Functions --
-        
-        const updateStock = useCallback((id, delta, date, cost) => {
-            const stock = stocks.find(s => s.id === id);
-            if (!stock) return;
-
-            setStocks(prev => prev.map(item => {
-                if (item.id === id) {
-                    const newQty = Math.max(0, item.quantity + delta);
-                    return { ...item, quantity: newQty };
-                }
-                return item;
-            }));
-
-            const newTx = {
-                id: Date.now().toString() + Math.random().toString().slice(2),
-                stockId: id,
-                stockName: stock.name,
-                change: delta,
-                cost: cost,
-                date: date || new Date().toISOString().split('T')[0],
-                timestamp: Date.now()
-            };
-            setTransactions(prev => [newTx, ...prev]);
-        }, [stocks]);
-
-        const updateStockConfig = useCallback((id, config) => {
-            setStocks(prev => prev.map(item => {
-                if (item.id === id) {
-                    return { 
-                        ...item, 
-                        normalAmount: config.normalAmount !== undefined ? Math.max(1, config.normalAmount) : item.normalAmount,
-                        orderQuantity: config.orderQuantity !== undefined ? Math.max(1, config.orderQuantity) : item.orderQuantity,
-                        orderCost: config.orderCost !== undefined ? Math.max(0, config.orderCost) : item.orderCost
-                    };
-                }
-                return item;
-            }));
-        }, []);
-
-        const updateTransactionNotes = useCallback((id, notes) => {
-            setTransactions(prev => prev.map(tx => {
-                if (tx.id === id) return { ...tx, notes };
-                return tx;
-            }));
-        }, []);
-
-        const updatePrefs = useCallback((newPrefs) => {
-           setPrefs(prev => ({...prev, ...newPrefs}));
-        }, []);
-
-        const addStock = useCallback((name, normalAmount, orderQuantity) => {
-            setStocks(prev => [
-                ...prev,
-                {
-                    id: `stock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                    name,
-                    quantity: 0,
-                    normalAmount: Math.max(1, normalAmount),
-                    orderQuantity: Math.max(1, orderQuantity),
-                    orderCost: 0
-                }
-            ]);
-        }, []);
-
-        const deleteStock = useCallback((id) => {
-            if (!window.confirm("確定要刪除此貨品嗎？歷史記錄將會保留。")) return;
-            setStocks(prev => prev.filter(s => s.id !== id));
         }, []);
 
         const handleBackup = async () => {
-            const data = {
-                app: "StoreKeeper",
-                version: "1.0",
-                createdAt: new Date().toISOString(),
-                stocks,
-                transactions
-            };
-            const jsonString = JSON.stringify(data, null, 2);
-            const fileName = `store_backup_${new Date().toISOString().slice(0, 10)}.json`;
-
-            // Helper for Unicode Base64
-            // window.btoa alone fails on unicode characters like Chinese
-            const toBase64 = (str) => {
-                return window.btoa(unescape(encodeURIComponent(str)));
-            };
-
-            // 1. Try Native Sharing (Best for Mobile/Android)
-            // Note: Using 'text/plain' improves compatibility with Android intent targets (WhatsApp, Drive, etc.)
-            // even though the content is JSON.
-            if (navigator.canShare && navigator.share) {
-                try {
-                    const file = new File([jsonString], fileName, { type: 'text/plain' });
-                    if (navigator.canShare({ files: [file] })) {
-                        await navigator.share({
-                            title: 'StoreKeeper Backup',
-                            text: `Backup created on ${new Date().toLocaleDateString()}`,
-                            files: [file]
-                        });
-                        return; // Success
-                    }
-                } catch (error) {
-                    // If user cancelled, stop here. Don't fallback to download.
-                    if (error.name === 'AbortError') return;
-                    console.warn("Share API failed, falling back to download:", error);
-                }
-            }
-            
-            // 2. Fallback: Data URI Download (Android WebView Friendly)
-            // WebViews often fail with Blob URLs but handle Data URIs better.
-            try {
-                const base64Data = toBase64(jsonString);
-                const dataUri = `data:application/json;base64,${base64Data}`;
-                
-                const link = document.createElement('a');
-                link.href = dataUri;
-                link.download = fileName;
-                
-                document.body.appendChild(link);
-                link.click();
-                
-                // Small delay before removal to ensure Android WebView catches the intent
-                setTimeout(() => {
-                    document.body.removeChild(link);
-                }, 100);
-
-            } catch (e) {
-                console.error("Data URI download failed", e);
-                
-                // 3. Ultimate Fallback: Blob URL
-                try {
-                   const blob = new Blob([jsonString], { type: 'application/json' });
-                   const url = URL.createObjectURL(blob);
-                   const link = document.createElement('a');
-                   link.href = url;
-                   link.download = fileName;
-                   document.body.appendChild(link);
-                   link.click();
-                   setTimeout(() => {
-                       document.body.removeChild(link);
-                       URL.revokeObjectURL(url);
-                   }, 100);
-                } catch (e2) {
-                   alert("匯出失敗 (Export Failed): " + e2.message);
-                }
-            }
+          await exportBackup(stocks, transactions);
         };
 
-        const handleImportClick = () => {
-            fileInputRef.current?.click();
-        };
+        const handleImportClick = () => fileInputRef.current?.click();
 
         const handleFileChange = async (event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-
-            try {
-                const text = await file.text();
-                const data = JSON.parse(text);
-                
-                if (data.app !== 'StoreKeeper' || !Array.isArray(data.stocks)) {
-                     throw new Error("檔案格式不正確 (Invalid Format)");
-                }
-
-                if (window.confirm("警告：還原備份將會覆蓋現有的所有資料。是否繼續？")) {
-                    setStocks(data.stocks);
-                    setTransactions(data.transactions || []);
-                    setIsSettingsOpen(false);
-                    alert("還原成功！");
-                }
-            } catch (error) {
-                alert("匯入失敗: " + error.message);
-            } finally {
-                if (fileInputRef.current) fileInputRef.current.value = '';
+          const file = event.target.files?.[0];
+          if (!file) return;
+          try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            const validation = validateBackupData(data);
+            if (!validation.isValid) throw new Error("Format Invalid");
+            if (confirm("Restore will overwrite current data. Continue?")) {
+               setStocks(validation.stocks);
+               setTransactions(validation.transactions);
+               setIsSettingsOpen(false);
+               alert("Restored successfully!");
             }
+          } catch (e) {
+            alert("Import failed: " + e.message);
+          } finally {
+            if(fileInputRef.current) fileInputRef.current.value = '';
+          }
         };
 
-        // -- Context Value --
-        const contextValue = {
-            stocks,
-            transactions,
-            prefs,
-            updateStock,
-            updateStockConfig,
-            updateTransactionNotes,
-            updatePrefs,
-            addStock,
-            deleteStock,
-            getStockStatus,
-            handleBackup,
-            handleImportClick,
-            handleFileChange,
-            fileInputRef
-        };
+        const contextValue = { stocks, transactions, updateStock, updateStockConfig, updateTransactionNotes, getStockStatus, addStock, deleteStock };
 
-        // -- Render --
-        if (!isLoaded) return <div className="flex items-center justify-center h-screen text-gray-400">載入中...</div>;
+        if (!isLoaded) return <div className="flex items-center justify-center h-screen">Loading...</div>;
 
         return (
           <StockContext.Provider value={contextValue}>
             <div className="flex flex-col h-[100dvh] bg-gray-50 overflow-hidden">
-               {/* Header */}
-               <header className="bg-white shadow-sm px-4 py-3 flex items-center justify-between z-10 shrink-0 relative">
+              <header className="bg-white shadow-sm px-4 py-3 flex items-center justify-between z-10 shrink-0 relative">
                 <h1 className="text-xl font-bold text-gray-800 truncate">
-                  {currentView === 'INVENTORY' && '庫存一覽 (Stock)'}
-                  {currentView === 'EDIT' && '出入貨管理 (Edit)'}
-                  {currentView === 'ALERTS' && '警報與統計 (Alerts)'}
-                  {currentView === 'HISTORY' && '出入貨記錄 (History)'}
+                  {currentView === 'INVENTORY' && '庫存一覽'}
+                  {currentView === 'EDIT' && '出入貨管理'}
+                  {currentView === 'ALERTS' && '警報與統計'}
+                  {currentView === 'HISTORY' && '出入貨記錄'}
                 </h1>
-                <button 
-                  onClick={() => setIsSettingsOpen(true)}
-                  className="text-gray-500 hover:text-gray-700 p-1.5 rounded-full hover:bg-gray-100 transition-colors"
-                >
+                <button onClick={() => setIsSettingsOpen(true)} className="text-gray-500 hover:text-gray-700 p-1.5 rounded-full hover:bg-gray-100 transition-colors">
                    <Settings size={24} />
                 </button>
               </header>
 
-              {/* Main Content Area */}
-              {/* Added 'overscroll-none' to prevent pull-to-refresh on mobile */}
-              <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-4 bg-gray-50 relative overscroll-none">
-                 {currentView === 'INVENTORY' && <InventoryView />}
-                 {currentView === 'EDIT' && <EditStockView />}
-                 {currentView === 'ALERTS' && <AlertsView />}
-                 {currentView === 'HISTORY' && <HistoryView />}
+              <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-4 bg-gray-50 relative">
+                {currentView === 'INVENTORY' && <InventoryView />}
+                {currentView === 'EDIT' && <EditStockView />}
+                {currentView === 'ALERTS' && <AlertsView />}
+                {currentView === 'HISTORY' && <HistoryView />}
               </main>
 
-              {/* Navigation */}
               <nav className="bg-white border-t border-gray-200 shrink-0 w-full z-50 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] relative">
                 <div className="flex justify-between items-center h-16 px-2">
                   <NavButton active={currentView === 'INVENTORY'} onClick={() => setCurrentView('INVENTORY')} icon={<LayoutDashboard size={24} />} label="查看" />
@@ -1006,25 +1001,29 @@
                 </div>
               </nav>
 
-              {/* Settings Modal */}
               {isSettingsOpen && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in">
                    <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl">
                       <div className="flex justify-between items-center mb-4">
-                         <h3 className="font-bold text-lg text-gray-800">設定 (Settings)</h3>
-                         <button onClick={() => setIsSettingsOpen(false)}><X size={24} className="text-gray-400"/></button>
+                         <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2"><Settings className="text-gray-500" size={20} /> 設定</h3>
+                         <button onClick={() => setIsSettingsOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
                       </div>
                       <div className="space-y-4">
                          <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
                             <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><Database size={18} /> 備份數據</h4>
-                            <button onClick={handleBackup} className="w-full flex items-center justify-center gap-2 p-3 bg-white text-blue-600 rounded-lg border border-blue-200 font-bold shadow-sm"><Share2 size={18}/> 匯出備份</button>
+                            <p className="text-xs text-blue-600 mb-3">匯出備份 (WhatsApp/Email/File)</p>
+                            <button onClick={handleBackup} className="w-full flex items-center justify-center gap-2 p-3 bg-white text-blue-600 rounded-lg border border-blue-200 font-bold hover:bg-blue-50 transition-all shadow-sm">
+                               <Share2 size={18}/> 匯出備份
+                            </button>
                          </div>
                          <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
                             <h4 className="font-bold text-orange-800 mb-2 flex items-center gap-2"><RefreshCw size={18} /> 還原數據</h4>
+                            <p className="text-xs text-orange-700 mb-3">注意：現有資料將被覆蓋。</p>
                             <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".json" className="hidden" />
-                            <button onClick={handleImportClick} className="w-full flex items-center justify-center gap-2 p-3 bg-white text-orange-600 rounded-lg border border-orange-200 font-bold shadow-sm"><Upload size={18}/> 匯入備份</button>
+                            <button onClick={handleImportClick} className="w-full flex items-center justify-center gap-2 p-3 bg-white text-orange-600 rounded-lg border border-orange-200 font-bold hover:bg-orange-50 transition-all shadow-sm">
+                               <Upload size={18}/> 匯入備份
+                            </button>
                          </div>
-                         <div className="text-center"><p className="text-xs text-gray-400">StoreKeeper v1.2.1</p></div>
                       </div>
                    </div>
                 </div>
@@ -1032,15 +1031,11 @@
             </div>
           </StockContext.Provider>
         );
-      }
+      };
 
       const NavButton = ({ active, onClick, icon, label }) => (
-        <button 
-          onClick={onClick}
-          className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors duration-200 ${active ? 'text-brand-600 bg-brand-50' : 'text-gray-400 hover:text-gray-600'}`}
-        >
-          {icon}
-          <span className="text-xs font-bold">{label}</span>
+        <button onClick={onClick} className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors duration-200 ${active ? 'text-brand-600 bg-brand-50' : 'text-gray-400 hover:text-gray-600'}`}>
+          {icon} <span className="text-xs font-bold">{label}</span>
         </button>
       );
 
