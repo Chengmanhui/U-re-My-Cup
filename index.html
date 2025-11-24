@@ -435,10 +435,21 @@
                 <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl">
                   <h3 className="font-bold text-lg mb-4">新增貨品</h3>
                   <div className="space-y-4 mb-6">
-                    <input type="text" placeholder="貨品名稱" value={newName} onChange={e => setNewName(e.target.value)} className="w-full border rounded-lg px-3 py-2 font-bold text-lg" />
-                    <div className="flex gap-3">
-                       <input type="number" placeholder="標準數量" value={newNormal} onChange={e => setNewNormal(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2" />
-                       <input type="number" placeholder="按鈕數值" value={newOrderQty} onChange={e => setNewOrderQty(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2" />
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">貨品名稱</label>
+                      <input type="text" placeholder="例如: 珍珠" value={newName} onChange={e => setNewName(e.target.value)} className="w-full border rounded-lg px-3 py-2 font-bold text-lg" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                       <div>
+                           <label className="block text-xs font-bold text-gray-500 mb-1">標準數量</label>
+                           <input type="number" placeholder="10" value={newNormal} onChange={e => setNewNormal(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2 font-bold" />
+                           <p className="text-[10px] text-gray-400 mt-1 leading-tight">大幅低於此數量時會顯示警報</p>
+                       </div>
+                       <div>
+                           <label className="block text-xs font-bold text-gray-500 mb-1">按鈕數值</label>
+                           <input type="number" placeholder="5" value={newOrderQty} onChange={e => setNewOrderQty(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2 font-bold" />
+                           <p className="text-[10px] text-gray-400 mt-1 leading-tight">快速入貨按鈕增加的數量</p>
+                       </div>
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -839,30 +850,42 @@
             };
             const jsonString = JSON.stringify(data, null, 2);
             const fileName = `store_backup_${new Date().toISOString().slice(0, 10)}.json`;
-            const file = new File([jsonString], fileName, { type: 'application/json' });
 
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            // 1. Try Native Sharing (Best for Mobile/Android)
+            // Note: Using 'text/plain' improves compatibility with Android intent targets (WhatsApp, Drive, etc.)
+            // even though the content is JSON.
+            if (navigator.canShare) {
                 try {
-                    await navigator.share({
-                        title: 'StoreKeeper Backup',
-                        text: `Backup created on ${new Date().toLocaleDateString()}`,
-                        files: [file]
-                    });
-                    return;
+                    const file = new File([jsonString], fileName, { type: 'text/plain' });
+                    if (navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                            title: 'StoreKeeper Backup',
+                            text: `Backup created on ${new Date().toLocaleDateString()}`,
+                            files: [file]
+                        });
+                        return; // Success
+                    }
                 } catch (error) {
-                   // Ignore abort errors
+                    // If user cancelled, stop here. Don't fallback to download.
+                    if (error.name === 'AbortError') return;
+                    console.warn("Share API failed, falling back to download:", error);
                 }
             }
             
-            // Fallback download
-            const url = URL.createObjectURL(file);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = fileName;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
+            // 2. Fallback: Direct Download (Desktop / Web)
+            try {
+                const blob = new Blob([jsonString], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert("匯出失敗 (Export Failed): " + e.message);
+            }
         };
 
         const handleImportClick = () => {
