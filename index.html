@@ -632,6 +632,60 @@
           }));
         }, [stocks, getStockStatus]);
 
+        // --- Data for Consumption Speed (Days to deplete normal amount) ---
+        const consumptionData = useMemo(() => {
+          const stats = {};
+          
+          // Helper to parse date string YYYY-MM-DD to timestamp
+          const parseDate = (dateStr) => {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            return new Date(y, m - 1, d).getTime();
+          };
+
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const todayTime = today.getTime();
+
+          stocks.forEach(stock => {
+             // 1. Get outgoing transactions
+             const outTx = transactions.filter(t => t.stockId === stock.id && t.change < 0);
+             
+             if (outTx.length === 0) {
+               stats[stock.id] = "---";
+               return;
+             }
+
+             // 2. Sum total usage
+             const totalUsed = outTx.reduce((acc, curr) => acc + Math.abs(curr.change), 0);
+
+             // 3. Calculate Time Span
+             const dates = outTx.map(t => parseDate(t.date));
+             const minDate = Math.min(...dates);
+             
+             const diffTime = Math.max(0, todayTime - minDate);
+             const daysSpan = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+             // 4. Average Daily Usage
+             const dailyAvg = totalUsed / daysSpan;
+
+             if (dailyAvg <= 0) {
+               stats[stock.id] = "> 999";
+               return;
+             }
+
+             // 5. Days to finish Normal Amount
+             const daysToFinish = stock.normalAmount / dailyAvg;
+
+             if (daysToFinish > 999) {
+               stats[stock.id] = "> 999";
+             } else {
+               stats[stock.id] = daysToFinish < 10 ? daysToFinish.toFixed(1) : Math.round(daysToFinish).toString();
+             }
+          });
+          
+          return stats;
+        }, [stocks, transactions]);
+
         const chartHeight = Math.max(300, stocks.length * 40);
 
         return (
@@ -692,6 +746,34 @@
                 </ResponsiveContainer>
               </div>
             </div>
+
+            {/* --- Stock Consumption Speed Section --- */}
+            <div>
+                <h2 className="text-lg font-bold text-gray-700 border-l-4 border-indigo-500 pl-3 mb-4 flex items-center gap-2">
+                標準量消耗速度
+                </h2>
+                <div className="bg-indigo-50 p-3 rounded-lg mb-3 text-xs text-indigo-800 border border-indigo-100">
+                根據過往記錄，推算用完一組「標準數量」大約需要多少天。
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                {stocks.map(stock => {
+                    const days = consumptionData[stock.id];
+                    return (
+                    <div key={stock.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[90px]">
+                        <div className="text-lg font-extrabold text-gray-800 mb-1 z-10">{stock.name}</div>
+                        <div className="text-xl font-black text-indigo-600 mb-1 z-10 flex items-baseline gap-0.5">
+                            {days}
+                            {days !== '---' && <span className="text-xs text-gray-400 font-medium">天</span>}
+                        </div>
+                        <div className="text-[10px] text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full z-10">
+                            {days === '---' ? '數據不足' : '用完一組'}
+                        </div>
+                    </div>
+                    )
+                })}
+                </div>
+            </div>
+
           </div>
         );
       };
